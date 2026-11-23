@@ -1,0 +1,101 @@
+name: Auto Update Windscribe
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: auto-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check latest upstream Windscribe release
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          RELEASE_JSON=$(gh api repos/Windscribe/Desktop-App/releases/latest)
+          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
+          LATEST="${TAG#v}"
+          DEB_URL=$(echo "$RELEASE_JSON" | jq -r --arg name "windscribe_${LATEST}_amd64.deb" '.assets[] | select(.name == $name) | .browser_download_url')
+
+          if [ -z "$LATEST" ] || [ -z "$DEB_URL" ] || [ "$DEB_URL" = "null" ]; then
+            echo "Could not find amd64 .deb asset for release $TAG" >&2
+            exit 1
+          fi
+
+          CURRENT=$(sed -n 's/^[[:space:]]*version = "\([^"]*\)";/\1/p' package.nix | head -n 1)
+          echo "Current: $CURRENT | Latest: $LATEST"
+
+          {
+            echo "current=$CURRENT"
+            echo "latest=$LATEST"
+            echo "tag=v$LATEST"
+            echo "deb_url=$DEB_URL"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update version and hash in package.nix
+        if: steps.check.outputs.needs_update == 'true'
+        env:
+          LATEST: ${{ steps.check.outputs.latest }}
+          DEB_URL: ${{ steps.check.outputs.deb_url }}
+        run: |
+          HASH=$(nix store prefetch-file --json "$DEB_URL" | jq -r '.hash')
+          if [ -z "$HASH" ] || [ "$HASH" = "null" ]; then
+            echo "Failed to prefetch $DEB_URL" >&2
+            exit 1
+          fi
+
+          sed -i "s|^\([[:space:]]*version = \)\"[^\"]*\";|\1\"${LATEST}\";|" package.nix
+          sed -i "s|^\([[:space:]]*hash = \)\"[^\"]*\";|\1\"${HASH}\";|" package.nix
+
+          git diff package.nix
+
+      - name: Verify build with nix build
+        if: steps.check.outputs.needs_update == 'true'
+        run: |
+          nix build --print-build-logs --no-link
+
+      - name: Commit, push, and create GitHub release
+        if: steps.check.outputs.needs_update == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CURRENT: ${{ steps.check.outputs.current }}
+          LATEST: ${{ steps.check.outputs.latest }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add package.nix
+          git commit -m "chore: update windscribe to ${TAG}"
+          git push origin HEAD:main
+
+          gh release create "${TAG}" \
+            --target main \
+            --title "Windscribe ${TAG}" \
+            --notes "Updated Windscribe official \`.deb\` repack from **v${CURRENT}** to **${TAG}**.
+
+Upstream release notes: https://github.com/Windscribe/Desktop-App/releases/tag/${TAG}"
