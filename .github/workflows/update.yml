@@ -93,9 +93,6 @@ jobs:
           git commit -m "chore: update windscribe to ${TAG}"
           git push origin HEAD:main
 
-          git tag -f latest
-          git push -f origin latest
-
           gh release create "${TAG}" \
             --target main \
             --title "Windscribe ${TAG}" \
