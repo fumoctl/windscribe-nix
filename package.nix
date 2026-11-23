@@ -7,7 +7,9 @@
   makeWrapper,
   # Runtime shared libraries
   acl,
+  alsa-lib,
   brotli,
+  dbus,
   fontconfig,
   freetype,
   glib,
@@ -16,6 +18,7 @@
   libdrm,
   libglvnd,
   libnl,
+  libpulseaudio,
   libx11,
   libxcb,
   libxcb-cursor,
@@ -120,6 +123,14 @@ stdenv.mkDerivation {
     libxcb-wm
   ];
 
+  # Libraries loaded via dlopen() at runtime by static Qt6 (DBus tray, audio, udev/systemd)
+  runtimeDependencies = [
+    (lib.getLib alsa-lib)
+    (lib.getLib dbus)
+    (lib.getLib libpulseaudio)
+    (lib.getLib systemd)
+  ];
+
   unpackPhase = ''
     runHook preUnpack
     dpkg-deb -x "$src" .
@@ -165,9 +176,10 @@ stdenv.mkDerivation {
       fi
     done
 
-    # Expose GUI and CLI in $out/bin
+    # Expose GUI and CLI in $out/bin (include /run/opengl-driver/lib for NixOS Mesa/NVIDIA EGL/GLX)
     makeWrapper "$out/opt/windscribe/Windscribe" "$out/bin/windscribe" \
-      --prefix PATH : "${runtimePath}"
+      --prefix PATH : "${runtimePath}" \
+      --prefix LD_LIBRARY_PATH : "/run/opengl-driver/lib"
 
     makeWrapper "$out/opt/windscribe/windscribe-cli" "$out/bin/windscribe-cli" \
       --prefix PATH : "${runtimePath}"
