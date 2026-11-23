@@ -16,9 +16,10 @@ Repacking the official `.deb` keeps Windscribe's prebuilt `libwsnet.so` (with th
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    windscribe-nix.url = "github:fumoctl/windscribe-nix";
-    # Or pin a specific release tag:
-    # windscribe-nix.url = "github:fumoctl/windscribe-nix/v2.25.8";
+    windscribe-nix = {
+      url = "github:fumoctl/windscribe-nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 }
 ```

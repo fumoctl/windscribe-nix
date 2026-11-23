@@ -93,7 +93,9 @@ jobs:
           git commit -m "chore: update windscribe to ${TAG}"
           git push origin HEAD:main
 
-          gh release create "${TAG}" \
-            --target main \
-            --title "Windscribe ${TAG}" \
-            --notes "$(printf 'Updated Windscribe official `.deb` repack from **v%s** to **%s**.\n\nUpstream release notes: https://github.com/Windscribe/Desktop-App/releases/tag/%s' "${CURRENT}" "${TAG}" "${TAG}")"
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              --target main \
+              --title "Windscribe ${TAG}" \
+              --notes "$(printf 'Updated Windscribe official `.deb` repack from **v%s** to **%s**.\n\nUpstream release notes: https://github.com/Windscribe/Desktop-App/releases/tag/%s' "${CURRENT}" "${TAG}" "${TAG}")"
+          fi
