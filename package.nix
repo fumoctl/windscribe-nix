@@ -4,7 +4,7 @@
   fetchurl,
   dpkg,
   autoPatchelfHook,
-  makeWrapper,
+  buildEnv,
   # Runtime shared libraries
   acl,
   alsa-lib,
@@ -33,9 +33,11 @@
   systemd,
   wayland,
   zstd,
-  # Runtime CLI tools used by helper & scripts
+  # Runtime CLI tools used by helper, GUI & scripts
   bash,
   coreutils,
+  e2fsprogs,
+  ethtool,
   findutils,
   gawk,
   gnugrep,
@@ -44,12 +46,14 @@
   iptables,
   iputils,
   iw,
+  kmod,
   nettools,
   networkmanager,
   openresolv,
   procps,
   psmisc,
   util-linux,
+  which,
   wireguard-tools,
   xdg-utils,
 }:
@@ -57,9 +61,13 @@
 let
   version = "2.25.8";
 
-  runtimePath = lib.makeBinPath [
+  runtimeTools = [
+    acl
     bash
     coreutils
+    dbus
+    e2fsprogs
+    ethtool
     findutils
     gawk
     gnugrep
@@ -68,6 +76,7 @@ let
     iptables
     iputils
     iw
+    kmod
     nettools
     networkmanager
     nftables
@@ -76,9 +85,22 @@ let
     psmisc
     systemd
     util-linux
+    which
     wireguard-tools
     xdg-utils
   ];
+
+  runtimePath = lib.makeBinPath runtimeTools;
+
+  helperToolsEnv = buildEnv {
+    name = "windscribe-helper-tools";
+    paths = runtimeTools;
+    pathsToLink = [
+      "/bin"
+      "/sbin"
+    ];
+    ignoreCollisions = true;
+  };
 in
 stdenv.mkDerivation {
   pname = "windscribe-bin";
@@ -92,7 +114,6 @@ stdenv.mkDerivation {
   nativeBuildInputs = [
     dpkg
     autoPatchelfHook
-    makeWrapper
   ];
 
   buildInputs = [
@@ -131,6 +152,10 @@ stdenv.mkDerivation {
     (lib.getLib systemd)
   ];
 
+  passthru = {
+    inherit helperToolsEnv runtimePath;
+  };
+
   unpackPhase = ''
     runHook preUnpack
     dpkg-deb -x "$src" .
@@ -157,32 +182,36 @@ stdenv.mkDerivation {
     done
     patchShebangs "$out/opt/windscribe/scripts"
 
+    # Launch via /opt/windscribe/Windscribe when bind-mounted so QCoreApplication::applicationDirPath()
+    # and helper's realpath() check both resolve to /opt/windscribe.
+    cat > "$out/bin/windscribe" <<EOF
+    #!${bash}/bin/bash
+    export PATH="${runtimePath}\''${PATH:+:\$PATH}"
+    export LD_LIBRARY_PATH="/run/opengl-driver/lib\''${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+    if [ -x /opt/windscribe/Windscribe ]; then
+      exec /opt/windscribe/Windscribe "\$@"
+    else
+      exec "$out/opt/windscribe/Windscribe" "\$@"
+    fi
+    EOF
+    chmod +x "$out/bin/windscribe"
+
+    cat > "$out/bin/windscribe-cli" <<EOF
+    #!${bash}/bin/bash
+    export PATH="${runtimePath}\''${PATH:+:\$PATH}"
+    if [ -x /opt/windscribe/windscribe-cli ]; then
+      exec /opt/windscribe/windscribe-cli "\$@"
+    else
+      exec "$out/opt/windscribe/windscribe-cli" "\$@"
+    fi
+    EOF
+    chmod +x "$out/bin/windscribe-cli"
+
     # Fix desktop entry Exec path
     substituteInPlace "$out/share/applications/windscribe.desktop" \
       --replace-fail "Exec=/opt/windscribe/Windscribe" "Exec=$out/bin/windscribe"
 
     runHook postInstall
-  '';
-
-  postFixup = ''
-    # Wrap helper and scripts with full Nix runtime PATH
-    wrapProgram "$out/opt/windscribe/helper" \
-      --prefix PATH : "${runtimePath}"
-
-    for script in "$out"/opt/windscribe/scripts/*; do
-      if [ -f "$script" ] && [ -x "$script" ]; then
-        wrapProgram "$script" \
-          --prefix PATH : "${runtimePath}"
-      fi
-    done
-
-    # Expose GUI and CLI in $out/bin (include /run/opengl-driver/lib for NixOS Mesa/NVIDIA EGL/GLX)
-    makeWrapper "$out/opt/windscribe/Windscribe" "$out/bin/windscribe" \
-      --prefix PATH : "${runtimePath}" \
-      --prefix LD_LIBRARY_PATH : "/run/opengl-driver/lib"
-
-    makeWrapper "$out/opt/windscribe/windscribe-cli" "$out/bin/windscribe-cli" \
-      --prefix PATH : "${runtimePath}"
   '';
 
   meta = {

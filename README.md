@@ -54,7 +54,7 @@ Make sure unfree packages are allowed (`nixpkgs.config.allowUnfree = true;` or a
 ### What the NixOS module configures
 
 - Installs `windscribe` (GUI) and `windscribe-cli` into `environment.systemPackages`.
-- Symlinks `/opt/windscribe` to the Nix store package via `systemd.tmpfiles.rules` (for hardcoded paths inside `helper` and `Windscribe`).
+- Bind-mounts `/opt/windscribe` from the Nix store package (so `windscribe-helper`'s `realpath("/opt/windscribe")` security check passes).
 - Writes `/etc/windscribe/platform` (`linux_deb_x64`).
 - Creates the `windscribe` system user/group and enables `windscribe-helper.service`.
 
